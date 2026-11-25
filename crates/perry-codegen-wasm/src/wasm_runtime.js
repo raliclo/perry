@@ -3959,6 +3959,10 @@ const __nodePathNamespaces = { posix: undefined, win32: undefined };
 
 // The bridge tables have no prototype: mem_call indexes them by a call site's method name,
 // and `o.isPrototypeOf(x)` must fall through to __classDispatch, not find Object.prototype's.
+// The receivers the array bridges walk (`indexOf`, `map`, `join`, ...): an array or a
+// typed array, whose own method then runs with the typed array's semantics.
+const __arrayOrTyped = (v) => Array.isArray(v) || (ArrayBuffer.isView(v) && !(v instanceof DataView));
+
 const __memDispatch = {
   __proto__: null,
   // `()` asks only whether array iteration is patched; `(value[, packed])` whether
@@ -4045,6 +4049,8 @@ const __memDispatch = {
   string_eq: (a, b) => a === b ? 1 : 0,
   string_len: (val) => {
     if (typeof val === 'string') return val.length;
+    // A typed array's own `length` (a DataView has none, so it reads undefined).
+    if (ArrayBuffer.isView(val)) return val.length;
     if (Array.isArray(val)) return val.length;
     return 0;
   },
@@ -4344,7 +4350,7 @@ const __memDispatch = {
   array_set: (arr, index, value) => { if (Array.isArray(arr)) arr[typeof index === 'number' ? index : index] = value; },
   array_length: (arr) => Array.isArray(arr) ? arr.length : 0,
   array_slice: (arr, start, end) => {
-    if (!Array.isArray(arr)) return [];
+    if (!__arrayOrTyped(arr)) return [];
     const s = typeof start === 'number' ? start : 0;
     const e = end === undefined ? undefined : (typeof end === 'number' ? end : end);
     return arr.slice(s, e);
@@ -4362,18 +4368,18 @@ const __memDispatch = {
   // The host join owns element conversion (nested arrays, nullish elements) and the
   // separator's: an undefined one is ",", not "undefined".
   array_join: (arr, ...separator) => {
-    if (Array.isArray(arr)) return arr.join(...separator);
+    if (__arrayOrTyped(arr)) return arr.join(...separator);
     // Another object's `join` with at most one argument (a path module value): its own method.
     return arr !== null && typeof arr === 'object' && typeof arr.join === 'function'
       ? arr.join(...separator) : '';
   },
-  array_index_of: (arr, value, fromIndex) => { if (!Array.isArray(arr)) return -1; return arr.indexOf(value, fromIndex); },
-  array_includes: (arr, value, fromIndex) => { if (!Array.isArray(arr)) return 0; return arr.includes(value, fromIndex) ? 1 : 0; },
+  array_index_of: (arr, value, fromIndex) => { if (!__arrayOrTyped(arr)) return -1; return arr.indexOf(value, fromIndex); },
+  array_includes: (arr, value, fromIndex) => { if (!__arrayOrTyped(arr)) return 0; return arr.includes(value, fromIndex) ? 1 : 0; },
   // fromIndex goes through only when the call passes one: an explicit `undefined`
   // searches from index 0, not from the end.
-  array_last_index_of: (arr, value, ...fromIndex) => Array.isArray(arr) ? arr.lastIndexOf(value, ...fromIndex) : -1,
+  array_last_index_of: (arr, value, ...fromIndex) => __arrayOrTyped(arr) ? arr.lastIndexOf(value, ...fromIndex) : -1,
   array_concat: (a1, a2) => (Array.isArray(a1) ? a1 : []).concat(Array.isArray(a2) ? a2 : []),
-  array_reverse: (arr) => { if (Array.isArray(arr)) arr.reverse(); return arr; },
+  array_reverse: (arr) => { if (__arrayOrTyped(arr)) arr.reverse(); return arr; },
   array_flat: (arr) => Array.isArray(arr) ? arr.flat() : [],
   array_is_array: (val) => Array.isArray(val) ? 1 : 0,
   array_from: (val) => Array.from(val),
@@ -4547,12 +4553,12 @@ const __memDispatch = {
 
   // Array higher-order methods — WASM callbacks use i64 (BigInt) params/returns.
   array_map: (arr, cb) => {
-    const call = Array.isArray(arr) ? __arrayCallback(cb) : undefined;
+    const call = __arrayOrTyped(arr) ? __arrayCallback(cb) : undefined;
     if (!call) return [];
     return arr.map((v, i) => __bitsToJsValue(call(__jsValueToBits(v), __jsValueToBits(i), __jsValueToBits(arr))));
   },
   array_filter: (arr, cb) => {
-    const call = Array.isArray(arr) ? __arrayCallback(cb) : undefined;
+    const call = __arrayOrTyped(arr) ? __arrayCallback(cb) : undefined;
     if (!call) return [];
     return arr.filter((v, i) => {
       const r = call(__jsValueToBits(v), __jsValueToBits(i), __jsValueToBits(arr));
@@ -4564,13 +4570,13 @@ const __memDispatch = {
   },
   // `forEach` is dispatched by name, so a Set or a Map receiver reaches it too.
   array_forEach: (arr, cb) => {
-    const isCollection = Array.isArray(arr) || arr instanceof Set || arr instanceof Map;
+    const isCollection = __arrayOrTyped(arr) || arr instanceof Set || arr instanceof Map;
     const call = isCollection ? __arrayCallback(cb) : undefined;
     if (!call) return;
     arr.forEach((v, i) => call(__jsValueToBits(v), __jsValueToBits(i), __jsValueToBits(arr)));
   },
   array_reduce: (arr, cb, initial) => {
-    const call = Array.isArray(arr) ? __arrayCallback(cb) : undefined;
+    const call = __arrayOrTyped(arr) ? __arrayCallback(cb) : undefined;
     if (!call) return undefined;
     let acc = initial === undefined ? __jsValueToBits(arr[0]) : __jsValueToBits(initial);
     const startIdx = initial === undefined ? 1 : 0;
@@ -4578,7 +4584,7 @@ const __memDispatch = {
     return __bitsToJsValue(acc);
   },
   array_find: (arr, cb) => {
-    const call = Array.isArray(arr) ? __arrayCallback(cb) : undefined;
+    const call = __arrayOrTyped(arr) ? __arrayCallback(cb) : undefined;
     if (!call) return undefined;
     for (let i = 0; i < arr.length; i++) {
       const vBits = __jsValueToBits(arr[i]);
@@ -4587,7 +4593,7 @@ const __memDispatch = {
     return undefined;
   },
   array_find_index: (arr, cb) => {
-    const call = Array.isArray(arr) ? __arrayCallback(cb) : undefined;
+    const call = __arrayOrTyped(arr) ? __arrayCallback(cb) : undefined;
     if (!call) return -1;
     for (let i = 0; i < arr.length; i++) { if (__bitsToJsValue(call(__jsValueToBits(arr[i]), __jsValueToBits(i), __jsValueToBits(arr)))) return i; }
     return -1;
@@ -4595,7 +4601,7 @@ const __memDispatch = {
   array_find_last: (arr, cb) => __reflectApply(Array.prototype.findLast, arr, [__hostPredicate(cb)]),
   array_find_last_index: (arr, cb) => __reflectApply(Array.prototype.findLastIndex, arr, [__hostPredicate(cb)]),
   array_sort: (arr, cb) => {
-    if (!Array.isArray(arr)) return arr;
+    if (!__arrayOrTyped(arr)) return arr;
     if (cb === undefined || cb === null) { arr.sort(); return arr; }
     const call = __arrayCallback(cb);
     if (!call) { arr.sort(); return arr; }
@@ -4620,8 +4626,8 @@ const __memDispatch = {
   array_to_spliced: (arr, start, deleteCount, ...items) => __reflectApply(Array.prototype.toSpliced, arr, [start, deleteCount, ...items]),
   array_with: (arr, index, value) => __reflectApply(Array.prototype.with, arr, [index, value]),
   array_copy_within: (arr, target, start, end) => __reflectApply(Array.prototype.copyWithin, arr, [target, start, end]),
-  array_some: (arr, cb) => Array.isArray(arr) && arr.some(__hostPredicate(cb)) ? 1 : 0,
-  array_every: (arr, cb) => Array.isArray(arr) && arr.every(__hostPredicate(cb)) ? 1 : 0,
+  array_some: (arr, cb) => __arrayOrTyped(arr) && arr.some(__hostPredicate(cb)) ? 1 : 0,
+  array_every: (arr, cb) => __arrayOrTyped(arr) && arr.every(__hostPredicate(cb)) ? 1 : 0,
 
   // Classes — args are plain JS values. obj is the object, className/methodName are strings.
   // class_new returns a plain object carrying its class name (see __classInstance).

@@ -250,6 +250,8 @@ impl WasmModuleEmitter {
             "json_stringify",
             "map_new",
             "WeakMap",
+            "ArrayBuffer",
+            "DataView",
             "weakref_new",
             "weakref_deref",
             "finreg_new",
@@ -446,6 +448,7 @@ impl WasmModuleEmitter {
         for name in bridge_names
             .iter()
             .chain(super::expr::ITERATOR_RECORD_BRIDGES)
+            .chain(&super::expr::TYPED_ARRAY_CTORS)
         {
             self.intern_string(name);
         }
